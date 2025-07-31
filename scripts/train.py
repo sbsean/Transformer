@@ -14,6 +14,27 @@ from torch.utils.tensorboard import SummaryWriter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+class NoamLR:
+    """Attention is All You Need 논문의 Learning Rate Scheduler"""
+    def __init__(self, optimizer, d_model, warmup_steps=4000):
+        self.optimizer = optimizer
+        self.d_model = d_model
+        self.warmup_steps = warmup_steps
+        self.step_num = 0
+    
+    def step(self):
+        """Learning rate 업데이트"""
+        self.step_num += 1
+        
+        # 논문의 공식: lrate = d_model^(-0.5) * min(step_num^(-0.5), step_num * warmup_steps^(-1.5))
+        lr = (self.d_model ** (-0.5)) * min(
+            self.step_num ** (-0.5), 
+            self.step_num * (self.warmup_steps ** (-1.5))
+        )
+        
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = lr
+
 def create_checkpoint_folder(base_path='checkpoints', log=False):
     """체크포인트 및 로그 저장을 위한 폴더를 생성합니다."""
     setting_number = 1
@@ -93,10 +114,14 @@ class Trainer:
         
         
         if opt_name == 'Adam':
+            # Attention is All You Need 논문의 Adam 설정
+            # β1 = 0.9, β2 = 0.98, ϵ = 10⁻⁹
             self.optimizer = optimizer_class(
                 self.model.parameters(), 
                 lr=self.lr,
-                weight_decay=self.kwargs.get('weight_decay', 1e-4)
+                betas=(0.9, 0.98),
+                eps=1e-9,
+                weight_decay=self.kwargs.get('weight_decay', 0)  # 논문에서는 weight decay 사용하지 않음
             )
         else:
             
@@ -107,9 +132,14 @@ class Trainer:
             self.optimizer = optimizer_class(self.model.parameters(), **valid_kwargs)
 
     def _init_scheduler(self):
-        """스케줄러 초기화"""
+        """스케줄러 초기화 - Attention is All You Need 논문 방식"""
         scheduler_name = self.kwargs.get('scheduler')
-        if scheduler_name and self.optimizer:
+        if scheduler_name == 'NoamLR':
+            # 논문의 Noam Learning Rate Scheduler
+            d_model = self.kwargs.get('d_model', 512)
+            warmup_steps = self.kwargs.get('warmup_steps', 4000)
+            self.scheduler = NoamLR(self.optimizer, d_model, warmup_steps)
+        elif scheduler_name and self.optimizer:
             # 기본 스케줄러 (StepLR 등)
             scheduler_class = getattr(torch.optim.lr_scheduler, scheduler_name)
             valid_kwargs = {
@@ -217,6 +247,10 @@ class Trainer:
             loss = self.criterion(outputs, tgt_output)
             loss.backward()
             self.optimizer.step()
+            
+            # NoamLR 스케줄러는 매 스텝마다 업데이트
+            if self.scheduler and hasattr(self.scheduler, 'step_num'):
+                self.scheduler.step()
 
             total_loss += loss.item()
             bleu = self._calculate_bleu_score(outputs, tgt_output)
@@ -301,7 +335,8 @@ class Trainer:
             epoch_val_losses.append(val_loss)
             epoch_val_bleus.append(val_bleu)
 
-            if self.scheduler:
+            # NoamLR이 아닌 경우에만 에포크 단위로 스케줄러 호출
+            if self.scheduler and not hasattr(self.scheduler, 'step_num'):
                 self.scheduler.step()
 
            
