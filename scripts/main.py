@@ -70,7 +70,7 @@ class Args:
         metadata={"help": "Learning rate for the optimizer."}
     )
     weight_decay: float = field(
-        default=1e-4,
+        default=0.0,
         metadata={"help": "Weight decay for the optimizer."}
     )
     optimizer: str = field(
@@ -78,8 +78,12 @@ class Args:
         metadata={"help": "Optimizer to use (e.g., 'Adam', 'SGD')."}
     )
     scheduler: str = field(
-        default="StepLR",
+        default="NoamLR",
         metadata={"help": "Learning rate scheduler to use."}
+    )
+    warmup_steps: int = field(
+        default=4000,
+        metadata={"help": "Number of warmup steps for NoamLR scheduler."}
     )
     step_size: int = field(
         default=5,
