@@ -25,10 +25,9 @@ def create_causal_mask(size, device=None):
      [0, 0, 1],
      [0, 0, 0]]
     '''
-    if device is None:
-        mask = torch.triu(torch.ones(size, size), diagonal=1).bool() # 상삼각행렬 생성 (대각선 위쪽만 1, 나머지는 0)
-    else:
-        mask = torch.triu(torch.ones(size, size, device=device), diagonal=1).bool() # 상삼각행렬 생성 (대각선 위쪽만 1, 나머지는 0)
+    mask = torch.triu(torch.ones(size, size), diagonal=1).bool() # 상삼각행렬 생성 (대각선 위쪽만 1, 나머지는 0)
+    if device is not None:
+        mask = mask.to(device)
     return mask
 
 
@@ -42,6 +41,11 @@ class ScaledDotProductAttention(nn.Module):
     def __init__(self, d_model):
         super(ScaledDotProductAttention, self).__init__()
         self.d_model = d_model #model의 embedding 차원
+        
+        # Q, K, V를 위한 선형 변환 레이어 추가
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
 
     def forward(self, Q, K, V, mask=None):
         batch_size = Q.size(0)
@@ -51,6 +55,7 @@ class ScaledDotProductAttention(nn.Module):
         K = self.W_k(K)
 
         V = self.W_v(V)
+        
 
         scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_model)
 
@@ -139,7 +144,6 @@ class Embeddings(nn.Module):
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size, d_model)
-        self.d_model = d_model
 
     def forward(self, x):
         return self.embedding(x) * math.sqrt(self.d_model)  
@@ -153,7 +157,7 @@ class Softmax(nn.Module):
 
     def forward(self, x):
         logits = self.proj(x)
-        return F.softmax(logits, dim=-1)
+        return logits  # logits만 반환, softmax는 loss function에서 처리
     
 " Positional Encoding 정리"
 '''
@@ -329,7 +333,9 @@ class Transformer(nn.Module):
         if src_mask is None:
             src_mask = create_padding_mask(src)
         if tgt_mask is None:
-            tgt_mask = create_padding_mask(tgt) & create_causal_mask(tgt.size(1), device=tgt.device)
+            padding_mask = create_padding_mask(tgt)
+            causal_mask = create_causal_mask(tgt.size(1), device=tgt.device)
+            tgt_mask = padding_mask & (~causal_mask).unsqueeze(0).unsqueeze(0)
             
         # Encoder forward pass
         encoder_output = self.encoder(src, src_mask)
